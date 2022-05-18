@@ -2,7 +2,8 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 const jwt = require('jsonwebtoken');
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+const stripe = require("stripe")(process.env.PAYMENT_STRIPE_KEY);
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -37,6 +38,7 @@ async function run() {
     const bookingCollections = client.db('Doctors-Schedule').collection('booking');
     const userCollections = client.db('Doctors-Schedule').collection('user');
     const doctorCollections = client.db('Doctors-Schedule').collection('doctors');
+    const paymentCollections = client.db('Doctors-Schedule').collection('payments');
 
     const verifyAdmin = async (req, res, next) => {
       const requester = req.decoded.email;
@@ -78,6 +80,29 @@ async function run() {
       else {
         return res.status(403).send({ message: 'Access forbidden' })
       }
+    })
+
+    app.get('/booking/:id', async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: ObjectId(id) }
+      const booking = await bookingCollections.findOne(query);
+      res.send(booking)
+    })
+
+    //payment id update
+    app.patch('/booking/:id', async(req, res) => {
+      const id = req.params.id;
+      const payment = req.body;
+      const filter = {_id: ObjectId(id)};
+      const updateDoc = {
+        $set:{
+          paid: true,
+          transectionId: payment.transectionId
+        }
+      };
+      const result = await paymentCollections.insertOne(payment);
+      const updatedBooking = await bookingCollections.updateOne(filter, updateDoc);
+      res.send(updateDoc)
     })
 
     //manage treatment
@@ -146,17 +171,31 @@ async function run() {
       const result = await doctorCollections.insertOne(doctor);
       res.send(result);
     })
-    
-    app.get('/doctors', async(req, res) => {
+
+    app.get('/doctors', async (req, res) => {
       const doctors = await doctorCollections.find().toArray();
       res.send(doctors)
     })
 
-    app.delete('/doctors/:email', jwtVerify, verifyAdmin, async(req, res) => {
+    app.delete('/doctors/:email', jwtVerify, verifyAdmin, async (req, res) => {
       const email = req.params.email;
-      const filter= {email: email};
+      const filter = { email: email };
       const result = await doctorCollections.deleteOne(filter);
       res.send(result)
+    })
+
+    app.post("/create-payment-intent",  async (req, res) => {
+      const { price } = req.body;
+      amount = price*100;
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount,
+        currency: 'usd',
+        payment_method_types: ['card']
+      });
+
+      res.send({
+        clientSecret: paymentIntent.client_secret
+      });
     })
 
   }
